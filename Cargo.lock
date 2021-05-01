@@ -975,6 +975,7 @@ dependencies = [
  "anyhow",
  "futures",
  "log",
+ "mime",
  "pretty_env_logger",
  "teloxide",
  "tokio",

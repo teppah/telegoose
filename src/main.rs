@@ -3,7 +3,9 @@ use std::env;
 use teloxide::types::{MessageKind, MediaKind, ParseMode, DiceEmoji,MediaDocument, Document};
 use teloxide::net::Download;
 
-use log::{info, warn, debug, error, log, trace};
+#[macro_use]
+extern crate log;
+// use log::{info, warn, debug, error, log, trace};
 use telegoose::Dialogue;
 
 #[tokio::main]
@@ -44,14 +46,11 @@ async fn run() {
 
 // FSM state transition logic
 async fn handle_message(cx: UpdateWithCx<Bot, Message>, dialogue: Dialogue) -> TransitionOut<Dialogue> {
-    trace!("transition time!");
-    trace!("{:?}", cx.update);
-    match dialogue {
+    match &dialogue {
         Dialogue::ReceiveFile(_) => {
             match &cx.update.kind {
                 MessageKind::Common(ref c)
                     if matches!(c.media_kind, MediaKind::Document(_))=> {
-                    // send blank message for now
                     dialogue.react(cx, "".into()).await
                 }
                 _ => {
