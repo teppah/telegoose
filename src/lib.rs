@@ -1,12 +1,15 @@
 use teloxide::prelude::*;
 use teloxide::macros::Transition;
-use teloxide::types::{MediaDocument, MediaKind, Document, MessageKind};
+use teloxide::types::{MediaDocument, MediaKind, Document, MessageKind, InputFile};
 
 #[macro_use]
 extern crate log;
+
 // use log::{info, warn, debug, error, log, trace};
 use crate::Dialogue::ReceiveFormat;
 use teloxide::net::Download;
+use reqwest::Method;
+use std::borrow::Borrow;
 
 #[derive(Transition, Clone)]
 pub enum Dialogue {
@@ -86,11 +89,40 @@ pub struct ReceiveFormatState {
 
 #[teloxide(subtransition)]
 async fn receive_format(state: ReceiveFormatState, cx: TransitionIn<Bot>, format: String) -> TransitionOut<Dialogue> {
+    // assume existence
+    let url = std::env::var("GOOSE_URL").unwrap();
+
+    cx.answer("Processing...").send().await?;
     trace!("Format: {}", format);
 
     let file = cx.requester.get_file(&state.file_id).send().await?;
-    trace!("{:?}", file);
-    let mut stream = cx.requester.download_file_stream(&file.file_path);
+    let mut data: Vec<u8> = vec![];
+    cx.requester.download_file(&file.file_path, &mut data).await;
+
+    let client = match reqwest::Client::builder().brotli(true).build() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Error building client: {}", e);
+            cx.answer(format!("Error, please start over: {}", e)).send().await?;
+            return next(StartState);
+        }
+    };
+
+    let length = data.len();
+    let pdf_part = reqwest::multipart::Part::stream_with_length(data, length as u64)
+        .file_name("file.pdf")
+        .mime_str("application/pdf").unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("formatString", format)
+        .part("file", pdf_part);
+
+    let res = client.request(Method::POST, url)
+        .multipart(form)
+        .send().await.unwrap();
+    let new_data = res.bytes().await.unwrap();
+
+    let new_file = InputFile::Memory { file_name: "Split.zip".to_string(), data: new_data.to_vec().into() };
     cx.answer("Here is your processed thing!").send().await?;
+    cx.answer_document(new_file).caption("Here is your file!").send().await?;
     next(StartState)
 }

@@ -11,6 +11,14 @@ use telegoose::Dialogue;
 #[tokio::main]
 async fn main() {
     teloxide::enable_logging!();
+    // check existence of environment variables
+    match (std::env::var("GOOSE_URL"), std::env::var("TELOXIDE_TOKEN")) {
+        (Ok(_), Ok(_)) => {}
+        _ => {
+            error!("Missing/invalid environment variables: GOOSE_URL and/or TELOXIDE_TOKEN");
+            std::process::exit(1);
+        }
+    }
     run().await;
 }
 
