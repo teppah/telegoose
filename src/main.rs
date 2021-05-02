@@ -6,6 +6,7 @@ use teloxide::types::{MessageKind, MediaKind};
 extern crate log;
 
 use telegoose::Dialogue;
+use telegoose::states::{ReceiveFileState};
 
 #[tokio::main]
 async fn main() {
@@ -35,7 +36,13 @@ async fn run() {
 
 // FSM state transition logic
 async fn handle_message(cx: UpdateWithCx<Bot, Message>, dialogue: Dialogue) -> TransitionOut<Dialogue> {
-    trace!("{:?}", cx.update);
+    let text = cx.update.text().map(ToString::to_string);
+    if text.as_deref() == Some(&"/reset") {
+        cx.answer("Progress reset, please send a new file to process.")
+            .send()
+            .await?;
+        return next(Dialogue::ReceiveFile(ReceiveFileState));
+    }
     match &dialogue {
         Dialogue::ReceiveFile(_) => {
             match &cx.update.kind {
@@ -50,7 +57,7 @@ async fn handle_message(cx: UpdateWithCx<Bot, Message>, dialogue: Dialogue) -> T
             }
         }
         Dialogue::Start(_) | Dialogue::ReceiveFormat(_) => {
-            if let Some(s) = cx.update.text().map(|s| s.to_string()) {
+            if let Some(s) = text {
                 dialogue.react(cx, s).await
             } else {
                 // fallback FSM transition
