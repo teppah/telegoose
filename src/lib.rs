@@ -5,11 +5,8 @@ use teloxide::types::{MediaDocument, MediaKind, Document, MessageKind, InputFile
 #[macro_use]
 extern crate log;
 
-// use log::{info, warn, debug, error, log, trace};
-use crate::Dialogue::ReceiveFormat;
 use teloxide::net::Download;
-use reqwest::Method;
-use std::borrow::Borrow;
+use reqwest::{Method, Client, multipart::{Part, Form}};
 
 #[derive(Transition, Clone)]
 pub enum Dialogue {
@@ -47,7 +44,7 @@ impl ::std::convert::From<ReceiveFormatState> for Dialogue {
 pub struct StartState;
 
 #[teloxide(subtransition)]
-async fn start(state: StartState, cx: TransitionIn<Bot>, _: String) -> TransitionOut<Dialogue> {
+async fn start(_state: StartState, cx: TransitionIn<Bot>, _: String) -> TransitionOut<Dialogue> {
     cx.answer("Send a PDF file to be processed.").send().await?;
     next(ReceiveFileState)
 }
@@ -74,7 +71,6 @@ async fn receive_file(state: ReceiveFileState, cx: TransitionIn<Bot>, _: String)
 
     if doc.mime_type == Some(mime::APPLICATION_PDF) {
         cx.answer("File received, what is the format?").send().await?;
-        trace!("File id: {}", file_id);
         next(ReceiveFormatState { file_id: file_id.clone() })
     } else {
         cx.answer("Sorry, this bot only supports PDF files for now. Please send a PDF file.").send().await?;
@@ -87,42 +83,69 @@ pub struct ReceiveFormatState {
     file_id: String,
 }
 
+const ERROR_MSG: &'static str = "Oops, something went wrong. Please restart.";
 #[teloxide(subtransition)]
 async fn receive_format(state: ReceiveFormatState, cx: TransitionIn<Bot>, format: String) -> TransitionOut<Dialogue> {
     // assume existence
     let url = std::env::var("GOOSE_URL").unwrap();
 
     cx.answer("Processing...").send().await?;
-    trace!("Format: {}", format);
 
     let file = cx.requester.get_file(&state.file_id).send().await?;
     let mut data: Vec<u8> = vec![];
-    cx.requester.download_file(&file.file_path, &mut data).await;
+    match cx.requester.download_file(&file.file_path, &mut data).await {
+        Err(e) => {
+            error!("Failed to download telegram file: {:?}", e);
+            cx.answer(ERROR_MSG).send().await?;
+            return next(StartState);
+        },
+        _ => ()
+    };
 
-    let client = match reqwest::Client::builder().brotli(true).build() {
+    let client = match Client::builder().brotli(true).build() {
         Ok(c) => c,
         Err(e) => {
             error!("Error building client: {}", e);
-            cx.answer(format!("Error, please start over: {}", e)).send().await?;
+            cx.answer(ERROR_MSG).send().await?;
             return next(StartState);
         }
     };
 
     let length = data.len();
-    let pdf_part = reqwest::multipart::Part::stream_with_length(data, length as u64)
+    let pdf_part = match Part::stream_with_length(data, length as u64)
         .file_name("file.pdf")
-        .mime_str("application/pdf").unwrap();
-    let form = reqwest::multipart::Form::new()
+        .mime_str("application/pdf") {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to construct multipart request: {}", e);
+            cx.answer(ERROR_MSG).send().await?;
+            return next(StartState);
+        }
+    };
+    let form = Form::new()
         .text("formatString", format)
         .part("file", pdf_part);
 
-    let res = client.request(Method::POST, url)
+    let res = match client.request(Method::POST, url)
         .multipart(form)
-        .send().await.unwrap();
-    let new_data = res.bytes().await.unwrap();
+        .send().await {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Failed to send request: {}", e);
+            cx.answer(ERROR_MSG).send().await?;
+            return next(StartState);
+        }
+    };
+    let new_data = match res.bytes().await {
+        Ok(d) => d,
+        Err(e) => {
+            error!("Failed to retrieve response bytes: {}", e);
+            cx.answer(ERROR_MSG).send().await?;
+            return next(StartState);
+        }
+    };
 
-    let new_file = InputFile::Memory { file_name: "Split.zip".to_string(), data: new_data.to_vec().into() };
-    cx.answer("Here is your processed thing!").send().await?;
+    let new_file = InputFile::Memory { file_name: "Questions.zip".to_string(), data: new_data.to_vec().into() };
     cx.answer_document(new_file).caption("Here is your file!").send().await?;
     next(StartState)
 }
