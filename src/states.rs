@@ -5,6 +5,7 @@ use teloxide::net::Download;
 use reqwest::{Client, Method};
 use reqwest::multipart::{Part, Form};
 
+use log::{warn, debug};
 
 #[derive(Clone)]
 pub struct StartState;
@@ -50,6 +51,8 @@ pub struct ReceiveFormatState {
 }
 
 const ERROR_MSG: &'static str = "Oops, something went wrong. Please restart.";
+const WRONG_INPUT_MSG: &'static str = "Oops, something was wrong with your input, check your input file and the format. Make sure the total number of pages is correct and try again.";
+const SERVER_ERROR_MSG: &'static str = "Oops, something went wrong on the server-side. Make sure your file is a valid PDF file and try again.";
 
 #[teloxide(subtransition)]
 async fn receive_format(state: ReceiveFormatState, cx: TransitionIn<Bot>, format: String) -> TransitionOut<Dialogue> {
@@ -90,7 +93,7 @@ async fn receive_format(state: ReceiveFormatState, cx: TransitionIn<Bot>, format
         }
     };
     let form = Form::new()
-        .text("formatString", format)
+        .text("formatString", format.to_string())
         .part("file", pdf_part);
 
     let res = match client.request(Method::POST, url)
@@ -103,16 +106,29 @@ async fn receive_format(state: ReceiveFormatState, cx: TransitionIn<Bot>, format
             return next(StartState);
         }
     };
-    let new_data = match res.bytes().await {
-        Ok(d) => d,
-        Err(e) => {
-            error!("Failed to retrieve response bytes: {}", e);
-            cx.answer(ERROR_MSG).send().await?;
-            return next(StartState);
-        }
-    };
 
-    let new_file = InputFile::Memory { file_name: "Questions.zip".to_string(), data: new_data.to_vec().into() };
-    cx.answer_document(new_file).caption("Here is your file!").send().await?;
+    if res.status().is_success() {
+        let new_data = match res.bytes().await {
+            Ok(d) => d,
+            Err(e) => {
+                error!("Failed to retrieve response bytes: {}", e);
+                cx.answer(ERROR_MSG).send().await?;
+                return next(StartState);
+            }
+        };
+
+        let new_file = InputFile::Memory { file_name: "Questions.zip".to_string(), data: new_data.to_vec().into() };
+        cx.answer_document(new_file).caption("Here is your file!").send().await?;
+        debug!("Processed file, format: {}, file: {}, chat: {:?}", format, file.file_id, cx.update.chat.kind);
+    } else if res.status().is_client_error() {
+        cx.answer(WRONG_INPUT_MSG).send().await?;
+        debug!("Client request error, format: {}, file: {}, chat: {:?}", format, file.file_id, cx.update.chat.kind);
+    } else if res.status().is_server_error() {
+        cx.answer(SERVER_ERROR_MSG).send().await?;
+        debug!("server error, format: {}, file: {}, chat: {:?}", format, file.file_id, cx.update.chat.kind);
+    } else {
+        cx.answer("Oops, some unknown error happened, please start over.").send().await?;
+        warn!("unknown server response: {:?}, format: {}, file: {}, chat: {:?}", res, format, file.file_id, cx.update.chat.kind);
+    };
     next(StartState)
 }
