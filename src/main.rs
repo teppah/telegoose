@@ -5,7 +5,6 @@ use teloxide::types::{MessageKind, MediaKind};
 #[macro_use]
 extern crate log;
 
-// use log::{info, warn, debug, error, log, trace};
 use telegoose::Dialogue;
 
 #[tokio::main]
@@ -27,13 +26,10 @@ async fn run() {
     info!("Bot started");
 
     teloxide::dialogues_repl(bot, |cx, dialogue: Dialogue| async move {
-        match handle_message(cx, dialogue).await {
-            Ok(stage) => stage,
-            Err(e) => {
-                error!("Request failed, Telegram error: {:?}", e);
-                panic!("Request failed")
-            }
-        }
+        handle_message(cx, dialogue).await.unwrap_or_else(|e| {
+            error!("Request failed, Telegram error: {:?}", e);
+            panic!("Request failed")
+        })
     }).await;
 }
 
