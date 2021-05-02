@@ -56,12 +56,21 @@ async fn handle_message(cx: UpdateWithCx<Bot, Message>, dialogue: Dialogue) -> T
                 }
             }
         }
-        Dialogue::Start(_) | Dialogue::ReceiveFormat(_) => {
+        Dialogue::Start(_) => {
+            if let Some(s) = text {
+                if s.eq("/process") | s.eq("/start") {
+                    return dialogue.react(cx, s).await;
+                }
+            }
+            // fallback FSM transition
+            cx.answer("Please send /process or /start to start processing.").send().await?;
+            return next(dialogue);
+        }
+        Dialogue::ReceiveFormat(_) => {
             if let Some(s) = text {
                 dialogue.react(cx, s).await
             } else {
-                // fallback FSM transition
-                cx.answer("Please send a message to continue.").send().await?;
+                cx.answer("Please send a format to continue.").send().await?;
                 next(dialogue)
             }
         }
